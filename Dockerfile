@@ -1,6 +1,5 @@
-FROM alpine:3.20
-
-RUN apk add --no-cache bash jq docker-cli
+FROM docker:cli
+RUN apk add --no-cache bash jq
 
 COPY watcher.sh /watcher.sh
 COPY entrypoint.sh /entrypoint.sh
