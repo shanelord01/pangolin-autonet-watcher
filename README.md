@@ -103,9 +103,34 @@ Other network attachments remain as long as their labels still exist.
 
 Default: false.
 
-# Logging
+# Optional Environment Variables
 
-LOG_FILE is an optional path to a log file.
+AUTONET_RESCAN_SECONDS
+Controls how often the watcher performs a full reconciliation of all containers and networks, independently of Docker events.
+
+Type: integer
+Default: 0 (disabled)
+Recommended: 30
+Units: seconds
+
+If set to a non-zero value, the watcher periodically scans all containers and ensures their network attachments match the configured label rules.
+
+Example: 
+```
+AUTONET_RESCAN_SECONDS: "30"
+```
+AUTONET_DEBUG
+Enables verbose logging, showing internal decision-making and extra details (including ignored healthcheck events).
+
+Type: boolean
+Default: false
+When to use: Helpful during setup, troubleshooting, or to confirm event processing logic.
+
+Example:
+```
+AUTONET_DEBUG: "true"
+```
+LOG_FILE
 Logs are always written to stdout, and additionally to LOG_FILE if set.
 ```env
 LOG_FILE=/var/log/pangolin-autonet-watcher.log
@@ -129,6 +154,8 @@ services:
       INITIAL_ATTACH: "true"
       INITIAL_RUNNING_ONLY: "false"
       AUTO_DISCONNECT: "true"
+      AUTONET_RESCAN_SECONDS: "30"
+      AUTONET_DEBUG: "true"
       LOG_FILE: ""
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
