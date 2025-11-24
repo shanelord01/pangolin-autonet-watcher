@@ -5,6 +5,7 @@ A lightweight Docker container that automatically connects labeled containers to
 I use this alongside the [docker.labelInjector](https://github.com/phyzical/docker.labelInjector) app on Unraid to easily label Unraid apps.
 
 Once setup, you only need to add or remove labels from containers and this "app" will auto connect and auto disconnect them. 
+
 ---
 
 ## Features
