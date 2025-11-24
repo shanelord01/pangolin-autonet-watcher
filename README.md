@@ -1,6 +1,8 @@
 # pangolin-autonet-watcher
 lightweight Docker container that automatically connects labeled containers to a specified Docker network.
 
+I use this alongside the [docker.labelInjector](https://github.com/phyzical/docker.labelInjector) app on unraid to easily label Unraid apps.
+
 Features
 - Watches Docker events in real time
 - Automatically connects containers to your chosen network
@@ -157,5 +159,13 @@ pangolin
 media_net
 
 with alias immich-public on both networks.
+
+# To run:
+```
+git clone https://github.com/shanelord01/pangolin-autonet-watcher
+cd pangolin-autonet-watcher
+docker compose build
+docker compose up -d
+```
 
 
