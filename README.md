@@ -168,7 +168,7 @@ LOG_FILE=/var/log/pangolin-autonet-watcher.log
 
 ## Example `docker-compose.yml`
 
-Below is an example `docker-compose.yml` using three label/network mappings:
+Below is an example `docker-compose.yml` using two label/network mappings:
 
 ```yaml
 services:
