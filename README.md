@@ -117,31 +117,19 @@ Below is an example docker-compose.yml using three label/network mappings:
 ```
 services:
   pangolin-autonet-watcher:
-    image: shasam/pangolin-autonet-watcher:latest
+    image: ghcr.io/shanelord01/pangolin-autonet-watcher:latest
     container_name: pangolin-autonet-watcher
     restart: always
     environment:
-      # Label -> network mappings
       AUTONET_1_KEY: "autonet.pangolin"
       AUTONET_1_NET: "pangolin"
-
       AUTONET_2_KEY: "autonet.media"
       AUTONET_2_NET: "media_net"
-
-      AUTONET_3_KEY: "autonet.tools"
-      AUTONET_3_NET: "tools_net"
-
-      # Optional alias label
       LABEL_ALIAS_KEY: "com.pangolin.autonet.alias"
-
-      # Behaviour flags
       INITIAL_ATTACH: "true"
       INITIAL_RUNNING_ONLY: "false"
       AUTO_DISCONNECT: "true"
-
-      # Optional logfile
       LOG_FILE: ""
-
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 ```
@@ -159,13 +147,3 @@ pangolin
 media_net
 
 with alias immich-public on both networks.
-
-# To run:
-```
-git clone https://github.com/shanelord01/pangolin-autonet-watcher
-cd pangolin-autonet-watcher
-docker compose build
-docker compose up -d
-```
-
-
