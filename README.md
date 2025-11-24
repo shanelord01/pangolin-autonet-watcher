@@ -13,8 +13,7 @@ I use this alongside the [docker.labelInjector](https://github.com/phyzical/dock
 - Uses labels (no configuration files required)
 - Supports custom network aliases
 - Works on Unraid, Linux, Docker Desktop
-- Extremely lightweight (Alpine-based, <10 MB)
-- No polling, no cron — event-driven
+- Lightweight
 
 ---
 
