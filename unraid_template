@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Pangolin_Autonet_Watcher</Name>
+  <Repository>ghcr.io/shanelord01/pangolin-autonet-watcher:latest</Repository>
+  <Registry>https://github.com/shanelord01/pangolin-autonet-watcher</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>lightweight Docker container that automatically connects labeled containers to a specified Docker network.&#13;
+&#13;
+I use this alongside the docker.labelInjector app on unraid to easily label Unraid apps.&#13;
+&#13;
+Features&#13;
+&#13;
+Watches Docker events in real time&#13;
+Automatically connects containers to your chosen network&#13;
+Uses labels (no configuration files required)&#13;
+Supports custom network aliases&#13;
+Works on Unraid, Linux, Docker Desktop&#13;
+Extremely lightweight</Overview>
+  <Category/>
+  <WebUI>http://[IP]</WebUI>
+  <TemplateURL/>
+  <Icon>https://github.com/shanelord01/pangolin-autonet-watcher/blob/main/pangolin_autonet_watcher.png?raw=true</Icon>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset>1</CPUset>
+  <DateInstalled>1763984878</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Autonet Key 1" Target="AUTONET_1_KEY" Default="autonet.pangolin" Mode="" Description="" Type="Variable" Display="always" Required="true" Mask="false">com.pangolin.autonet</Config>
+  <Config Name="Autonet Network 1" Target="AUTONET_1_NET" Default="pangolin" Mode="" Description="" Type="Variable" Display="always" Required="true" Mask="false">pangolin</Config>
+  <Config Name="Label Alias Key" Target="LABEL_ALIAS_KEY" Default="" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="false">com.pangolin.autonet.alias</Config>
+  <Config Name="Attach on initial startup" Target="INITIAL_ATTACH" Default="false" Mode="" Description="" Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="Initial Running Containers Only" Target="INITIAL_RUNNING_ONLY" Default="false" Mode="" Description="" Type="Variable" Display="always" Required="true" Mask="false">false</Config>
+  <Config Name="Auto disconnect on label removal" Target="AUTO_DISCONNECT" Default="false" Mode="" Description="" Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="ro" Description="" Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+  <Config Name="Rescan Interval in Seconds" Target="AUTONET_RESCAN_SECONDS" Default="30" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="false">30</Config>
+  <Config Name="Debug" Target="AUTONET_DEBUG" Default="false" Mode="" Description="" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <TailscaleStateDir/>
+</Container>
