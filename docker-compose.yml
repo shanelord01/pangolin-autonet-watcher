@@ -1,0 +1,21 @@
+services:
+  pangolin-autonet-watcher:
+    build: .
+    container_name: pangolin-autonet-watcher
+    restart: always
+    environment:
+      AUTONET_1_KEY: "autonet.pangolin"
+      AUTONET_1_NET: "pangolin"
+
+      AUTONET_2_KEY: "autonet.media"
+      AUTONET_2_NET: "media_net"
+
+      LABEL_ALIAS_KEY: "com.pangolin.autonet.alias"
+
+      INITIAL_ATTACH: "true"
+      INITIAL_RUNNING_ONLY: "false"
+      AUTO_DISCONNECT: "true"
+      LOG_FILE: ""
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
