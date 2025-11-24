@@ -189,7 +189,7 @@ services:
       AUTONET_DEBUG: "true"
       LOG_FILE: ""
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
 
 ---
