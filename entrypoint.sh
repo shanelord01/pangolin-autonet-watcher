@@ -1,10 +1,11 @@
-#!/bin/sh
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Wait for Docker engine
-until docker info >/dev/null 2>&1; do
-  echo "Waiting for Docker engine..."
-  sleep 1
-done
+# Simple wrapper so logs are clean and any unexpected crash is visible.
 
-exec /watcher.sh
+echo "[ENTRYPOINT] Starting Pangolin Autonet Watcher (Python)..."
+
+# Keep stdout unbuffered
+export PYTHONUNBUFFERED=1
+
+exec python3 /app/watcher.py
