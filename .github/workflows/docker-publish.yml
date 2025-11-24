@@ -1,10 +1,9 @@
-name: Build and Publish Docker Image
+name: Build and Publish Docker Image (Tag Release)
 
 on:
   push:
-    branches: ["main"]
-  release:
-    types: [published]
+    tags:
+      - "v*.*.*"   # Semantic version tags like v1.0.0, v2.3.1
 
 jobs:
   build:
@@ -25,11 +24,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          # Strip "refs/tags/" prefix
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Determined version: $VERSION"
+
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
+            ghcr.io/${{ github.repository_owner }}/pangolin-autonet-watcher:${{ steps.get_version.outputs.version }}
             ghcr.io/${{ github.repository_owner }}/pangolin-autonet-watcher:latest
             ghcr.io/${{ github.repository_owner }}/pangolin-autonet-watcher:${{ github.sha }}
