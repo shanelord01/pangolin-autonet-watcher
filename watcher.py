@@ -45,7 +45,6 @@ def load_autonet_config():
         net = os.getenv(net_env)
 
         if not key and not net:
-            # Stop when we hit the first completely empty slot
             break
 
         if key and net:
@@ -57,7 +56,6 @@ def load_autonet_config():
                 }
             )
         else:
-            # Partial config - log and ignore
             log(f"Warning: AUTONET_{index}_KEY / AUTONET_{index}_NET not both set, ignoring index {index}")
 
         index += 1
@@ -72,12 +70,9 @@ def load_autonet_config():
     initial_running_only = parse_bool(os.getenv("INITIAL_RUNNING_ONLY", "false"), False)
     auto_disconnect = parse_bool(os.getenv("AUTO_DISCONNECT", "true"), True)
 
-    # Rescan interval (seconds). 0 disables periodic rescan.
     rescan_seconds_str = os.getenv("AUTONET_RESCAN_SECONDS", "30")
     try:
-        rescan_seconds = int(rescan_seconds_str)
-        if rescan_seconds < 0:
-            rescan_seconds = 0
+        rescan_seconds = max(0, int(rescan_seconds_str))
     except ValueError:
         rescan_seconds = 30
 
@@ -98,13 +93,13 @@ def load_autonet_config():
         "initial_attach": initial_attach,
         "initial_running_only": initial_running_only,
         "auto_disconnect": auto_disconnect,
-        "rescan_seconds": rescan_seconds,
+        "rescan_seconds": resscan_seconds,
         "debug": debug,
     }
 
 
 # ---------------------------------------------------------
-# Core reconciliation logic (Option C)
+# Core behaviour (Option C)
 # ---------------------------------------------------------
 
 def label_truthy(value) -> bool:
@@ -114,12 +109,42 @@ def label_truthy(value) -> bool:
     return value not in ("", "0", "false", "no", "off")
 
 
+def detect_forbidden_network_mode(container, debug: bool = False):
+    """
+    Detects containers that cannot be attached/detached from networks:
+    - network_mode=container:<name>
+    - network_mode=host
+    - network_mode=none
+    Returns:
+        (skip: bool, reason: str)
+    """
+
+    attrs = container.attrs
+    host_config = attrs.get("HostConfig", {}) or {}
+
+    mode = host_config.get("NetworkMode", "")
+
+    if not isinstance(mode, str):
+        return False, ""
+
+    mode_lower = mode.strip().lower()
+
+    # network_mode: container:<target>
+    if mode_lower.startswith("container:"):
+        return True, f"container:{mode_lower.split(':', 1)[1]}"
+
+    # network_mode: host
+    if mode_lower == "host":
+        return True, "host"
+
+    # network_mode: none
+    if mode_lower == "none":
+        return True, "none"
+
+    return False, ""
+
+
 def reconcile_container(client: docker.DockerClient, container, cfg, reason: str = "event") -> None:
-    """
-    Option C behaviour:
-    - If label exists and is truthy -> ensure attached
-    - If label missing/false and container is attached -> detach (if AUTO_DISCONNECT=true)
-    """
     mappings = cfg["mappings"]
     alias_label = cfg["alias_label"]
     auto_disconnect = cfg["auto_disconnect"]
@@ -140,8 +165,20 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
     labels = attrs.get("Config", {}).get("Labels", {}) or {}
     networks = attrs.get("NetworkSettings", {}).get("Networks", {}) or {}
 
+    # -------------------------------------------------------------
+    # SKIP IF container uses host/container/none network mode
+    # -------------------------------------------------------------
+    skip, mode_reason = detect_forbidden_network_mode(container, debug)
+    if skip:
+        log(f"Skipping '{name}': network_mode={mode_reason} — cannot attach/detach networks.")
+        return
+
     if debug:
         log(f"[{reason}] Reconciling container '{name}' (id={container.short_id})")
+
+    # -------------------------------------------------------------
+    # Perform attach/detach reconciliation
+    # -------------------------------------------------------------
 
     for m in mappings:
         label_key = m["label_key"]
@@ -150,10 +187,9 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
         wants_attach = label_truthy(labels.get(label_key))
         is_connected = net_name in networks
 
-        # Alias handling
         alias = labels.get(alias_label, name)
 
-        # Attach if label present and not connected
+        # ATTACH
         if wants_attach and not is_connected:
             try:
                 if debug:
@@ -167,7 +203,7 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
             except APIError as e:
                 log(f"[{reason}] Failed to connect '{name}' to '{net_name}': {e}")
 
-        # Detach if label missing/false and container is connected
+        # DETACH
         elif not wants_attach and is_connected and auto_disconnect:
             try:
                 if debug:
@@ -204,7 +240,7 @@ def initial_attach_all(client: docker.DockerClient, cfg) -> None:
 
 
 # ---------------------------------------------------------
-# Event loop with reconnection + periodic rescan
+# Event loop
 # ---------------------------------------------------------
 
 def event_loop(client: docker.DockerClient, cfg) -> None:
@@ -229,7 +265,6 @@ def event_loop(client: docker.DockerClient, cfg) -> None:
                     continue
 
                 etype = event.get("Type")
-                # docker-py sometimes uses "status" or "Action"
                 status = event.get("status") or event.get("Action")
 
                 if etype != "container" or not status:
@@ -264,13 +299,16 @@ def event_loop(client: docker.DockerClient, cfg) -> None:
 
                 reconcile_container(client, container, cfg, reason=f"event:{status}")
 
-        except (DockerException, APIError, Exception):
-            # Catch everything, log, sleep a bit, then reconnect the event stream
+        except Exception:
             log("Error in event loop, will retry shortly:")
             traceback.print_exc()
             time.sleep(5)
             log("Re-establishing Docker events stream...")
 
+
+# ---------------------------------------------------------
+# Periodic rescan
+# ---------------------------------------------------------
 
 def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
     rescan_seconds = cfg["rescan_seconds"]
@@ -284,8 +322,10 @@ def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
 
     while True:
         time.sleep(rescan_seconds)
+
         if debug:
             log("Periodic rescan: reconciling all containers.")
+
         try:
             containers = client.containers.list(all=True)
         except APIError as e:
@@ -297,7 +337,7 @@ def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
 
 
 # ---------------------------------------------------------
-# Main entrypoint
+# Main
 # ---------------------------------------------------------
 
 def main():
@@ -309,17 +349,14 @@ def main():
 
     cfg = load_autonet_config()
 
-    # Initial attach
     initial_attach_all(client, cfg)
 
-    # Start periodic rescan in a background thread if enabled
     import threading
 
     if cfg["rescan_seconds"] > 0:
         t = threading.Thread(target=periodic_rescan_loop, args=(client, cfg), daemon=True)
         t.start()
 
-    # Run main event loop (blocking, with auto-reconnect)
     event_loop(client, cfg)
 
 
