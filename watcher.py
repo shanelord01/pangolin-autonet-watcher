@@ -93,7 +93,7 @@ def load_autonet_config():
         "initial_attach": initial_attach,
         "initial_running_only": initial_running_only,
         "auto_disconnect": auto_disconnect,
-        "rescan_seconds": resscan_seconds,
+        "rescan_seconds": rescan_seconds,
         "debug": debug,
     }
 
