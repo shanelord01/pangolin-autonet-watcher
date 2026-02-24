@@ -4,7 +4,7 @@ A lightweight Docker container that automatically connects labeled containers to
 
 I use this alongside the [docker.labelInjector](https://github.com/phyzical/docker.labelInjector) app on Unraid to easily label Unraid apps.
 
-Once setup, you only need to add or remove labels from containers and this "app" will auto connect and auto disconnect them. 
+Once setup, you only need to add or remove labels from containers and this "app" will auto connect and auto disconnect them.
 
 ---
 
@@ -15,6 +15,7 @@ Once setup, you only need to add or remove labels from containers and this "app"
 - Uses labels (no configuration files required)
 - Supports custom network aliases
 - Works on Unraid, Linux, Docker Desktop
+- Runs as a non-root user
 - Lightweight
 
 ---
@@ -82,6 +83,8 @@ com.pangolin.autonet.alias=immich-public
 then `immich-public` will be used as the alias on all attached networks.  
 If no alias label is present, the container name is used.
 
+Alias values must be valid DNS hostnames (letters, numbers, hyphens only — no spaces or special characters). Invalid values are automatically ignored and the container name is used as a fallback.
+
 **Default:**
 ```env
 LABEL_ALIAS_KEY=com.pangolin.autonet.alias
@@ -117,6 +120,7 @@ INITIAL_RUNNING_ONLY=false  # all containers (running and stopped)
 AUTO_DISCONNECT=true
 AUTO_DISCONNECT=false
 ```
+
 If `AUTO_DISCONNECT=true`:
 
 When a label corresponding to `AUTONET_N_KEY` is removed from a container, it is disconnected from `AUTONET_N_NET`.  
@@ -139,20 +143,18 @@ Controls how often the watcher performs a full reconciliation of all containers 
 
 If set to a non-zero value, the watcher periodically scans all containers and ensures their network attachments match the configured label rules.
 
-Example:
 ```env
 AUTONET_RESCAN_SECONDS="30"
 ```
 
 #### AUTONET_DEBUG
 
-Enables verbose logging, showing internal decision-making and extra details (including ignored healthcheck events).
+Enables verbose logging, showing internal decision-making and extra details.
 
 - **Type:** boolean
 - **Default:** false
-- **When to use:** Helpful during setup, troubleshooting, or to confirm event processing logic.
+- **When to use:** Helpful during initial setup or troubleshooting only. Disable in normal operation.
 
-Example:
 ```env
 AUTONET_DEBUG="true"
 ```
@@ -164,20 +166,32 @@ Logs are always written to stdout, and additionally to `LOG_FILE` if set.
 ```env
 LOG_FILE=/var/log/pangolin-autonet-watcher.log
 ```
+
 **Default:** no log file (stdout only).
 
 ---
 
 ## Example `docker-compose.yml`
 
-Below is an example `docker-compose.yml` using two label/network mappings:
-
 ```yaml
 services:
   pangolin-autonet-watcher:
     image: ghcr.io/shanelord01/pangolin-autonet-watcher:latest
     container_name: pangolin-autonet-watcher
-    restart: always
+    restart: unless-stopped
+
+    # Add the host's docker group so the non-root user inside the container
+    # can access /var/run/docker.sock (see Docker Socket Permissions below).
+    group_add:
+      - "999"
+
+    # Container hardening
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
     environment:
       AUTONET_1_KEY: "autonet.pangolin"
       AUTONET_1_NET: "pangolin"
@@ -188,8 +202,7 @@ services:
       INITIAL_RUNNING_ONLY: "false"
       AUTO_DISCONNECT: "true"
       AUTONET_RESCAN_SECONDS: "30"
-      AUTONET_DEBUG: "true"
-      LOG_FILE: ""
+      AUTONET_DEBUG: "false"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 ```
@@ -211,3 +224,52 @@ This container will then be attached to networks:
 - `media_net`
 
 with alias `immich-public` on both networks.
+
+---
+
+## Docker Socket Permissions
+
+This container runs as a non-root user (`appuser`, UID 1000). To allow it to access `/var/run/docker.sock`, you need to pass your host's docker group GID via `group_add` in your compose file.
+
+Find your host's docker group GID:
+
+```bash
+stat -c '%g' /var/run/docker.sock
+```
+
+Then set that value in your `docker-compose.yml`:
+
+```yaml
+group_add:
+  - "999"   # replace with your actual GID if different
+```
+
+Common GIDs by platform:
+
+| Platform | Typical GID |
+|----------|------------|
+| Standard Linux (Ubuntu, Debian) | `999` |
+| Unraid | `281` |
+| Docker Desktop (Mac/Windows) | varies — check with the command above |
+
+If you see `Permission denied` errors referencing the Docker socket in the container logs, this is the cause — check your GID and update `group_add` to match.
+
+---
+
+## Troubleshooting
+
+### Permission denied on Docker socket
+
+```
+Error: Permission denied while trying to connect to the Docker daemon socket
+```
+
+Your `group_add` GID doesn't match the docker group on your host. Run `stat -c '%g' /var/run/docker.sock` and update `group_add` in your compose file to match, then recreate the container.
+
+### Container marked unhealthy
+
+The container includes a healthcheck that pings the Docker socket every 30 seconds. If it goes unhealthy, the most common causes are the socket permission issue above, or the Docker daemon restarting and dropping the event stream. The event loop reconnects automatically — if the healthcheck fails persistently, check `docker logs <container_name>` for errors.
+
+### Container skipped with "network_mode=host"
+
+Containers using `network_mode: host` or `network_mode: container:<x>` cannot have networks attached or detached dynamically. The watcher will log a message and skip those containers. This is expected behaviour.
