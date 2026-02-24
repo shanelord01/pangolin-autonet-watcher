@@ -3,8 +3,24 @@ services:
     image: ghcr.io/shanelord01/pangolin-autonet-watcher:latest
     container_name: Pangolin_Autonet_Watcher
     restart: unless-stopped
+
+    # FIX H1: Add the host docker group so the non-root appuser (UID 1000)
+    # can access /var/run/docker.sock (owned root:docker, mode 660).
+    # GID 281 is correct for this Unraid host.
+    # Other users: check your GID with: stat -c '%g' /var/run/docker.sock
+    group_add:
+      - "281"
+
+    # FIX L1: Container hardening flags.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+
     networks:
       - default
+
     environment:
       AUTONET_1_KEY: com.pangolin.autonet
       AUTONET_1_NET: pangolin
@@ -15,7 +31,8 @@ services:
       INITIAL_RUNNING_ONLY: "false"
       AUTO_DISCONNECT: "true"
       AUTONET_RESCAN_SECONDS: "30"
-      # AUTONET_DEBUG: "true"
+      # FIX M3: Debug disabled. Set to "true" only when troubleshooting.
+      AUTONET_DEBUG: "false"
 
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
