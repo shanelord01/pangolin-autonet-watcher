@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 import time
+import threading
 import traceback
 from datetime import datetime
 
@@ -15,7 +17,16 @@ from docker.errors import NotFound, APIError, DockerException
 
 def log(msg: str) -> None:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    line = f"[{ts}] {msg}"
+    print(line, flush=True)
+
+    log_file = os.getenv("LOG_FILE", "").strip()
+    if log_file:
+        try:
+            with open(log_file, "a") as f:
+                f.write(line + "\n")
+        except OSError as e:
+            print(f"[{ts}] Warning: could not write to LOG_FILE '{log_file}': {e}", flush=True)
 
 
 def parse_bool(value: str | None, default: bool = False) -> bool:
@@ -29,11 +40,28 @@ def parse_bool(value: str | None, default: bool = False) -> bool:
     return default
 
 
-# Containers that have already logged the unsupported warning:
-unsupported_network_cache = set()
+# FIX M1: Use container ID (not name) as cache key, and expose a prune function.
+# This prevents the unbounded growth and name-reuse bug from the original.
+unsupported_network_cache: set[str] = set()
+_cache_lock = threading.Lock()
 
 
-def get_network_mode(container):
+def cache_add(container_id: str) -> bool:
+    """Add to cache. Returns True if it was newly added (i.e. first time seeing it)."""
+    with _cache_lock:
+        if container_id in unsupported_network_cache:
+            return False
+        unsupported_network_cache.add(container_id)
+        return True
+
+
+def cache_remove(container_id: str) -> None:
+    """Remove from cache on container destroy."""
+    with _cache_lock:
+        unsupported_network_cache.discard(container_id)
+
+
+def get_network_mode(container) -> str | None:
     """Return docker network_mode string, or None."""
     try:
         return container.attrs.get("HostConfig", {}).get("NetworkMode")
@@ -42,10 +70,33 @@ def get_network_mode(container):
 
 
 # ---------------------------------------------------------
+# Input validation
+# ---------------------------------------------------------
+
+# FIX H2: Validate alias values against RFC-1123 hostname rules before passing
+# to the Docker API. Docker aliases must be valid DNS labels.
+_ALIAS_RE = re.compile(r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$')
+
+
+def sanitise_alias(value: str, fallback: str, debug: bool = False) -> str:
+    """
+    Validate and return a Docker-safe network alias.
+    Falls back to the container name if the label value is invalid.
+    """
+    value = value.strip()[:64]
+    if _ALIAS_RE.match(value):
+        return value
+    if debug:
+        log(f"Warning: alias label value '{value}' is not a valid hostname — "
+            f"using container name '{fallback}' as alias instead.")
+    return fallback
+
+
+# ---------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------
 
-def load_autonet_config():
+def load_autonet_config() -> dict:
     mappings = []
     index = 1
 
@@ -66,7 +117,8 @@ def load_autonet_config():
                 "network": net.strip(),
             })
         else:
-            log(f"Warning: AUTONET_{index}_KEY / AUTONET_{index}_NET not both set, ignoring index {index}")
+            log(f"Warning: AUTONET_{index}_KEY / AUTONET_{index}_NET not both set, "
+                f"ignoring index {index}")
 
         index += 1
 
@@ -111,7 +163,7 @@ def load_autonet_config():
 
 
 # ---------------------------------------------------------
-# Core logic (Option C)
+# Core reconcile logic
 # ---------------------------------------------------------
 
 def label_truthy(value) -> bool:
@@ -121,7 +173,7 @@ def label_truthy(value) -> bool:
     return value not in ("", "0", "false", "no", "off")
 
 
-def reconcile_container(client: docker.DockerClient, container, cfg, reason: str = "event") -> None:
+def reconcile_container(client: docker.DockerClient, container, cfg: dict, reason: str = "event") -> None:
     mappings = cfg["mappings"]
     alias_label = cfg["alias_label"]
     auto_disconnect = cfg["auto_disconnect"]
@@ -139,14 +191,15 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
 
     attrs = container.attrs
     name = attrs.get("Name", "").lstrip("/") or container.name
+    container_id = container.id
 
     # Check network_mode (host or container:<x>)
     net_mode = get_network_mode(container)
     if net_mode and (net_mode == "host" or net_mode.startswith("container:")):
-        # Only log once
-        if name not in unsupported_network_cache:
-            unsupported_network_cache.add(name)
-            log(f"Skipping '{name}': network_mode={net_mode} — cannot attach/detach networks.")
+        # FIX M1: Key by container ID, not name. Prune happens on destroy event.
+        if cache_add(container_id):
+            log(f"Skipping '{name}' ({container.short_id}): network_mode={net_mode} "
+                f"— cannot attach/detach networks.")
         return
 
     labels = attrs.get("Config", {}).get("Labels", {}) or {}
@@ -161,15 +214,18 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
 
         wants_attach = label_truthy(labels.get(label_key))
         is_connected = net_name in networks
-        alias = labels.get(alias_label, name)
+
+        # FIX H2: Sanitise alias before passing to Docker API.
+        raw_alias = labels.get(alias_label, name)
+        alias = sanitise_alias(raw_alias, name, debug=debug)
 
         # Attach
         if wants_attach and not is_connected:
             try:
                 if debug:
                     log(f"[{reason}] Connecting '{name}' to '{net_name}' with alias '{alias}'")
-                client.api.connect_container_to_network(container.id, net_name, aliases=[alias])
-                log(f"Connecting '{name}' to '{net_name}' with alias '{alias}' (index {m['index']})")
+                client.api.connect_container_to_network(container_id, net_name, aliases=[alias])
+                log(f"Connected '{name}' to '{net_name}' with alias '{alias}' (index {m['index']})")
             except APIError as e:
                 log(f"[{reason}] Failed to connect '{name}' to '{net_name}': {e}")
 
@@ -178,17 +234,18 @@ def reconcile_container(client: docker.DockerClient, container, cfg, reason: str
             try:
                 if debug:
                     log(f"[{reason}] Disconnecting '{name}' from '{net_name}'")
-                client.api.disconnect_container_from_network(container.id, net_name)
-                log(f"Disconnecting '{name}' from '{net_name}' (index {m['index']})")
+                client.api.disconnect_container_from_network(container_id, net_name)
+                log(f"Disconnected '{name}' from '{net_name}' (index {m['index']})")
             except APIError as e:
                 log(f"[{reason}] Failed to disconnect '{name}' from '{net_name}': {e}")
 
         else:
             if debug:
-                log(f"[{reason}] No change for '{name}' on '{net_name}' (wants={wants_attach}, connected={is_connected})")
+                log(f"[{reason}] No change for '{name}' on '{net_name}' "
+                    f"(wants={wants_attach}, connected={is_connected})")
 
 
-def initial_attach_all(client: docker.DockerClient, cfg) -> None:
+def initial_attach_all(client: docker.DockerClient, cfg: dict) -> None:
     if not cfg["initial_attach"]:
         log("Initial attach disabled by configuration.")
         return
@@ -208,10 +265,10 @@ def initial_attach_all(client: docker.DockerClient, cfg) -> None:
 
 
 # ---------------------------------------------------------
-# Event loop + periodic rescan
+# Event loop
 # ---------------------------------------------------------
 
-def event_loop(client: docker.DockerClient, cfg) -> None:
+def event_loop(client: docker.DockerClient, cfg: dict) -> None:
     relevant_statuses = {
         "start", "restart", "die", "stop", "destroy", "update", "rename"
     }
@@ -231,6 +288,11 @@ def event_loop(client: docker.DockerClient, cfg) -> None:
 
                 cid = event.get("id")
                 if not cid:
+                    continue
+
+                # FIX M1: Prune destroyed containers from the unsupported cache.
+                if status == "destroy":
+                    cache_remove(cid)
                     continue
 
                 try:
@@ -253,7 +315,14 @@ def event_loop(client: docker.DockerClient, cfg) -> None:
             log("Re-establishing Docker event stream...")
 
 
-def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
+# ---------------------------------------------------------
+# Periodic rescan loop
+# FIX M2: Uses its own dedicated DockerClient rather than sharing
+# the main thread's client, avoiding concurrent access on a single
+# requests.Session without locking guarantees.
+# ---------------------------------------------------------
+
+def periodic_rescan_loop(cfg: dict) -> None:
     interval = cfg["rescan_seconds"]
     debug = cfg["debug"]
 
@@ -262,6 +331,12 @@ def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
         return
 
     log(f"Periodic rescan thread started (interval {interval} seconds).")
+
+    try:
+        client = docker.from_env()
+    except Exception as e:
+        log(f"Periodic rescan: failed to create Docker client: {e}")
+        return
 
     while True:
         time.sleep(interval)
@@ -282,7 +357,7 @@ def periodic_rescan_loop(client: docker.DockerClient, cfg) -> None:
 # Main entry
 # ---------------------------------------------------------
 
-def main():
+def main() -> None:
     try:
         client = docker.from_env()
     except Exception as e:
@@ -293,9 +368,8 @@ def main():
 
     initial_attach_all(client, cfg)
 
-    import threading
     if cfg["rescan_seconds"] > 0:
-        t = threading.Thread(target=periodic_rescan_loop, args=(client, cfg), daemon=True)
+        t = threading.Thread(target=periodic_rescan_loop, args=(cfg,), daemon=True)
         t.start()
 
     event_loop(client, cfg)
